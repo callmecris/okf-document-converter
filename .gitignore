@@ -1,0 +1,47 @@
+# Env y secretos
+.env
+.env.local
+.env.*.local
+
+# Go
+bin/
+*.test
+*.out
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+# Directorios de compilación y herramientas de Go
+pkg/
+vendor/
+
+# Docker
+# Archivos de volúmenes o logs temporales si se mapean al host
+docker-compose.override.yml
+
+# Node / Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+.output/
+.nuxt/
+.next/
+.cache/
+
+# Tailwind (si se generan archivos de caché o similar)
+.tailwind-cache/
+
+# Sistema
+.DS_Store
+*.log
+*.tmp
+*.bak
+
+# IDEs y Editores
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace

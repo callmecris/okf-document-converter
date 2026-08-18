@@ -1,0 +1,9 @@
+.git
+.gitignore
+.env
+*.log
+node_modules
+frontend
+scripts
+Makefile
+README.md
