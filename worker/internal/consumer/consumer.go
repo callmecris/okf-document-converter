@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,11 +23,15 @@ import (
 type HandlerFunc func(ctx context.Context, msg domain.JobMessage) error
 
 type Consumer struct {
-	conn     *amqp.Connection
-	ch       *amqp.Channel
-	queue    string
-	handler  HandlerFunc
-	log      *slog.Logger
+	conn    *amqp.Connection
+	ch      *amqp.Channel
+	queue   string
+	handler HandlerFunc
+	log     *slog.Logger
+	// prefetch es también el número máximo de trabajos que este worker
+	// procesa en paralelo: coincide con el QoS para no acumular mensajes
+	// reservados que no se estén atendiendo.
+	prefetch int
 }
 
 // NewConsumer conecta (con reintentos), configura prefetch y declara colas.
@@ -49,7 +54,7 @@ func NewConsumer(ctx context.Context, url, queueName string, prefetch int, handl
 		return nil, err
 	}
 	log.Info("rabbitmq connected (consumer)", "queue", queueName, "prefetch", prefetch)
-	return &Consumer{conn: conn, ch: ch, queue: queueName, handler: handler, log: log}, nil
+	return &Consumer{conn: conn, ch: ch, queue: queueName, handler: handler, log: log, prefetch: prefetch}, nil
 }
 
 // Start consume mensajes hasta que el contexto se cancele.
@@ -59,17 +64,40 @@ func (c *Consumer) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("start consuming: %w", err)
 	}
-	c.log.Info("consumer started", "tag", tag)
+	c.log.Info("consumer started", "tag", tag, "concurrencia", c.prefetch)
+
+	// Los trabajos se atienden en paralelo hasta el límite de prefetch: un
+	// documento largo no bloquea a los demás. El semáforo acota la
+	// concurrencia y wg permite drenar los trabajos en curso al apagar.
+	sem := make(chan struct{}, c.prefetch)
+	var wg sync.WaitGroup
 
 	for {
 		select {
 		case <-ctx.Done():
+			wg.Wait() // no cortar trabajos a medias
 			return nil
 		case d, ok := <-deliveries:
 			if !ok {
+				wg.Wait()
 				return errors.New("delivery channel closed")
 			}
-			c.process(ctx, d)
+
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				// Apagando: se devuelve el mensaje a la cola sin procesar.
+				_ = d.Nack(false, true)
+				wg.Wait()
+				return nil
+			}
+
+			wg.Add(1)
+			go func(d amqp.Delivery) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				c.process(ctx, d)
+			}(d)
 		}
 	}
 }

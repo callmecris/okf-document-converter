@@ -63,6 +63,18 @@ func (s *Storage) PutFile(ctx context.Context, bucket, objectKey, filePath, cont
 	return nil
 }
 
+// PutStream sube un objeto leyendo directamente del reader, sin materializar
+// el archivo en el disco del contenedor: la API no guarda estado local.
+// size puede ser -1 si se desconoce (se usa subida multiparte).
+func (s *Storage) PutStream(ctx context.Context, bucket, objectKey string, r io.Reader, size int64, contentType string) error {
+	if _, err := s.client.PutObject(ctx, bucket, objectKey, r, size, minio.PutObjectOptions{
+		ContentType: contentType,
+	}); err != nil {
+		return fmt.Errorf("upload %s: %w", objectKey, err)
+	}
+	return nil
+}
+
 // PresignedGetURL devuelve una URL temporal para descargar un objeto.
 func (s *Storage) PresignedGetURL(ctx context.Context, bucket, objectKey string, expiry time.Duration) (*url.URL, error) {
 	return s.client.PresignedGetObject(ctx, bucket, objectKey, expiry, nil)
