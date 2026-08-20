@@ -80,11 +80,16 @@ func (e *EpubConverter) Convert(ctx context.Context, opts Options) ([]Segment, e
 	}
 
 	segments := make([]Segment, 0, len(entries))
-	for i, entry := range entries {
+	// order numera los capítulos efectivamente escritos: si un capítulo
+	// referenciado en el índice no existe en el zip se omite, y usar el
+	// índice del entry dejaría huecos (capitulo-01, capitulo-02, capitulo-04).
+	order := 0
+	for _, entry := range entries {
 		srcFile := e.resolveChapter(files, entry.src)
 		if srcFile == nil {
 			continue // capítulo referenciado pero ausente: se omite
 		}
+		order++
 		rc, err := srcFile.Open()
 		if err != nil {
 			return nil, fmt.Errorf("open chapter %s: %w", entry.src, err)
@@ -103,9 +108,9 @@ func (e *EpubConverter) Convert(ctx context.Context, opts Options) ([]Segment, e
 
 		title := entry.title
 		if strings.TrimSpace(title) == "" {
-			title = fmt.Sprintf("Capítulo %d", i+1)
+			title = fmt.Sprintf("Capítulo %d", order)
 		}
-		seg, err := writeSegment(opts.WorkDir, i+1, title, markdown)
+		seg, err := writeSegment(opts.WorkDir, order, title, markdown)
 		if err != nil {
 			return nil, err
 		}

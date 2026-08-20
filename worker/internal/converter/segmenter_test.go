@@ -49,7 +49,7 @@ Contenido del capítulo dos con más detalle y párrafos.
 		if err != nil {
 			t.Fatalf("read segment %d: %v", i, err)
 		}
-		if !strings.HasPrefix(string(data), "# ") {
+		if !strings.HasPrefix(string(data), "# ") && !strings.HasPrefix(string(data), "## ") {
 			t.Errorf("segmento %d no empieza con heading: %s", i, data[:20])
 		}
 	}
@@ -85,5 +85,46 @@ func TestSegmentMarkdownSingleSegmentWithoutHeadings(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "Texto plano sin encabezados") {
 		t.Errorf("segmento sin heading no conserva el contenido: %s", data)
+	}
+}
+// Regresión: cada segmento debe contener SOLO su propia sección. El corte
+// anterior arrancaba al final del encabezado previo, por lo que cada concepto
+// arrastraba el cuerpo del anterior.
+func TestSegmentMarkdownNoContentBleed(t *testing.T) {
+	src := writeMarkdown(t, `# Uno
+
+CUERPO_UNO
+
+# Dos
+
+CUERPO_DOS
+
+# Tres
+
+CUERPO_TRES
+`)
+	segments, err := segmentMarkdown(t.TempDir(), src)
+	if err != nil {
+		t.Fatalf("segmentMarkdown: %v", err)
+	}
+	if len(segments) != 3 {
+		t.Fatalf("esperados 3 segmentos, got %d", len(segments))
+	}
+
+	bodies := []string{"CUERPO_UNO", "CUERPO_DOS", "CUERPO_TRES"}
+	for i, seg := range segments {
+		data, err := os.ReadFile(seg.File)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := string(data)
+		if !strings.Contains(got, bodies[i]) {
+			t.Errorf("segmento %d no contiene su propio cuerpo %s: %q", i+1, bodies[i], got)
+		}
+		for j, other := range bodies {
+			if j != i && strings.Contains(got, other) {
+				t.Errorf("segmento %d contaminado con %s: %q", i+1, other, got)
+			}
+		}
 	}
 }

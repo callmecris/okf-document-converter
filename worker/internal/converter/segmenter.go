@@ -49,35 +49,57 @@ func segmentMarkdown(workDir, srcPath string) ([]Segment, error) {
 		return []Segment{{Title: title, File: file, Order: 1}}, nil
 	}
 
+	// Offset de inicio de cada sección: la línea del encabezado. goldmark
+	// reporta en Lines() solo el texto del heading (sin los '#'), por lo que se
+	// retrocede hasta el inicio de esa línea para no perder el marcador.
+	starts := make([]int, len(headings))
+	for i, h := range headings {
+		start := 0
+		if lines := h.Lines(); lines.Len() > 0 {
+			start = lineStart(data, lines.At(0).Start)
+		}
+		starts[i] = start
+	}
+
 	segments := make([]Segment, 0, len(headings))
-	sectionStart := 0
 	for i, h := range headings {
 		title := strings.TrimSpace(string(h.Text(data)))
 		if title == "" {
 			title = fmt.Sprintf("Sección %d", i+1)
 		}
 
-		var blockEnd int
-		if lines := h.Lines(); lines.Len() > 0 {
-			blockEnd = lines.At(lines.Len() - 1).Stop
-		}
-
-		// La sección va desde sectionStart hasta el inicio del próximo
-		// encabezado e incluye su propio encabezado.
+		// La sección va desde su propio encabezado hasta el inicio del
+		// siguiente (o el fin del documento para la última).
 		sectionEnd := len(data)
 		if i+1 < len(headings) {
-			if lines := headings[i+1].Lines(); lines.Len() > 0 {
-				sectionEnd = lines.At(0).Start
-			}
+			sectionEnd = starts[i+1]
 		}
+
+		// Preludio: contenido anterior al primer encabezado. Se antepone al
+		// primer segmento para no perderlo.
+		sectionStart := starts[i]
+		if i == 0 {
+			sectionStart = 0
+		}
+
 		content := strings.TrimSpace(string(data[sectionStart:sectionEnd]))
 		seg, err := writeSegment(workDir, i+1, title, content)
 		if err != nil {
 			return nil, err
 		}
 		segments = append(segments, seg)
-		sectionStart = blockEnd
 	}
 
 	return segments, nil
+}
+
+// lineStart retrocede desde off hasta el inicio de su línea.
+func lineStart(data []byte, off int) int {
+	if off > len(data) {
+		off = len(data)
+	}
+	for off > 0 && data[off-1] != '\n' {
+		off--
+	}
+	return off
 }
