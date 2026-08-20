@@ -18,6 +18,8 @@ export default function App() {
   // Se incrementa en cada recarga de trabajos para refrescar las métricas.
   const [refreshKey, setRefreshKey] = useState(0)
   const timer = useRef<number | null>(null)
+  // Trabajos activos, en una ref para que el intervalo no dependa de `jobs`.
+  const activeRef = useRef(0)
 
   // Token inválido/expirado: volver al login automáticamente.
   useEffect(() => {
@@ -33,7 +35,9 @@ export default function App() {
   const load = useCallback(async () => {
     if (!token) return
     try {
-      setJobs(await listJobs())
+      const fresh = await listJobs()
+      setJobs(fresh)
+      activeRef.current = statusCount(fresh)
       setRefreshKey((k) => k + 1)
       setError('')
     } catch (err) {
@@ -42,17 +46,21 @@ export default function App() {
   }, [token])
 
   // Polling suave: cada 4s mientras haya trabajos pendientes/procesando.
+  //
+  // El intervalo NO puede depender de `jobs`: load() actualiza el estado, lo
+  // que volveria a ejecutar el efecto y a llamar a load() en bucle. El numero
+  // de trabajos activos se consulta por referencia, que no dispara renders.
   useEffect(() => {
     if (!token) return
     void load()
     if (timer.current !== null) window.clearInterval(timer.current)
     timer.current = window.setInterval(() => {
-      if (statusCount(jobs) > 0) void load()
+      if (activeRef.current > 0) void load()
     }, 4000)
     return () => {
       if (timer.current !== null) window.clearInterval(timer.current)
     }
-  }, [token, jobs, load])
+  }, [token, load])
 
   const logout = () => {
     clearToken()
