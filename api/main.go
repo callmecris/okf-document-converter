@@ -62,6 +62,7 @@ func run() error {
 	defer pub.Close()
 
 	auth := handler.NewAuth(db, cfg.JWTSecret, log)
+	metrics := handler.NewMetrics(db, log)
 	jobs := handler.NewJobs(db, store, pub, log)
 	bundles := handler.NewBundles(db, store, log)
 
@@ -70,11 +71,15 @@ func run() error {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	mux.HandleFunc("GET /metrics", metrics.Prometheus)
+	mux.HandleFunc("GET /api/v1/metrics", metrics.JSON)
 	mux.HandleFunc("POST /api/v1/auth/register", auth.Register)
 	mux.HandleFunc("POST /api/v1/auth/login", auth.Login)
 	mux.Handle("POST /api/v1/jobs", middleware.JWTAuth(cfg.JWTSecret, http.HandlerFunc(jobs.Create)))
 	mux.Handle("GET /api/v1/jobs", middleware.JWTAuth(cfg.JWTSecret, http.HandlerFunc(jobs.List)))
 	mux.Handle("GET /api/v1/jobs/{id}", middleware.JWTAuth(cfg.JWTSecret, http.HandlerFunc(jobs.Get)))
+	mux.Handle("POST /api/v1/jobs/{id}/cancel", middleware.JWTAuth(cfg.JWTSecret, http.HandlerFunc(jobs.Cancel)))
+	mux.Handle("POST /api/v1/jobs/{id}/retry", middleware.JWTAuth(cfg.JWTSecret, http.HandlerFunc(jobs.Retry)))
 	mux.Handle("GET /api/v1/jobs/{id}/download", middleware.JWTAuth(cfg.JWTSecret, http.HandlerFunc(bundles.DownloadZip)))
 	mux.Handle("GET /api/v1/jobs/{id}/bundle/{path...}", middleware.JWTAuth(cfg.JWTSecret, http.HandlerFunc(bundles.DownloadFile)))
 

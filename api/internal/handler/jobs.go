@@ -1,10 +1,8 @@
 package handler
 
 import (
-	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"path/filepath"
 
 	"github.com/google/uuid"
@@ -56,7 +54,7 @@ func (j *Jobs) Create(w http.ResponseWriter, r *http.Request) {
 	name := filepath.Base(header.Filename)
 	format, ok := domain.ParseFormat(filepath.Ext(name))
 	if !ok {
-		writeError(w, http.StatusBadRequest, "formato no soportado; usa pdf, docx o epub")
+		writeError(w, http.StatusBadRequest, "formato no soportado; usa md, txt, html, pdf, docx o epub")
 		return
 	}
 
@@ -64,24 +62,10 @@ func (j *Jobs) Create(w http.ResponseWriter, r *http.Request) {
 	jobID := uuid.NewString()
 	objectKey := filepath.Join("originals", userID, jobID+filepath.Ext(name))
 
-	tmp, err := os.CreateTemp("", "okf-upload-*"+filepath.Ext(name))
-	if err != nil {
-		internalError(w, j.log, err)
-		return
-	}
-	defer os.Remove(tmp.Name())
-	defer tmp.Close()
-
-	if _, err := io.Copy(tmp, file); err != nil {
-		internalError(w, j.log, err)
-		return
-	}
-	if err := tmp.Close(); err != nil {
-		internalError(w, j.log, err)
-		return
-	}
-
-	if err := j.storage.PutFile(r.Context(), j.storage.OriginalsBucket(), objectKey, tmp.Name(), contentTypeFor(format)); err != nil {
+	// El archivo va directo del request a MinIO: la API no escribe nada en el
+	// disco del contenedor (requisito de API sin estado).
+	if err := j.storage.PutStream(r.Context(), j.storage.OriginalsBucket(), objectKey,
+		file, header.Size, contentTypeFor(format)); err != nil {
 		internalError(w, j.log, err)
 		return
 	}
@@ -149,6 +133,102 @@ func (j *Jobs) Get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// Cancel cancela un trabajo en curso o pendiente. Si el worker ya lo estaba
+// procesando, la conversión termina pero el bundle no se publica.
+func (j *Jobs) Cancel(w http.ResponseWriter, r *http.Request) {
+	job, err := j.repo.GetJob(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "trabajo no encontrado")
+		return
+	}
+	if job.UserID != middleware.UserID(r) {
+		writeError(w, http.StatusForbidden, "este trabajo no te pertenece")
+		return
+	}
+	if !job.Status.Cancelable() {
+		writeError(w, http.StatusConflict, "el trabajo ya terminó; no se puede cancelar")
+		return
+	}
+
+	canceled, err := j.repo.CancelJob(r.Context(), job.ID)
+	if err != nil {
+		internalError(w, j.log, err)
+		return
+	}
+	if !canceled {
+		// Carrera con el worker: terminó entre el GET y el UPDATE.
+		writeError(w, http.StatusConflict, "el trabajo ya terminó; no se puede cancelar")
+		return
+	}
+
+	updated, err := j.repo.GetJob(r.Context(), job.ID)
+	if err != nil {
+		internalError(w, j.log, err)
+		return
+	}
+	j.log.Info("job cancelado", "job_id", job.ID, "estado_previo", job.Status)
+	writeJSON(w, http.StatusOK, updated)
+}
+
+// Retry reencola un trabajo fallido reutilizando el original ya almacenado en
+// MinIO (no hay que volver a subir el archivo). El nuevo trabajo queda
+// vinculado al anterior mediante retry_of.
+//
+// Es idempotente: si el trabajo ya tiene un reintento, se devuelve ese mismo
+// en lugar de crear uno nuevo.
+func (j *Jobs) Retry(w http.ResponseWriter, r *http.Request) {
+	job, err := j.repo.GetJob(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "trabajo no encontrado")
+		return
+	}
+	if job.UserID != middleware.UserID(r) {
+		writeError(w, http.StatusForbidden, "este trabajo no te pertenece")
+		return
+	}
+	if job.Status != domain.JobStatusFailed && job.Status != domain.JobStatusCanceled {
+		writeError(w, http.StatusConflict, "solo se pueden reintentar trabajos fallidos o cancelados")
+		return
+	}
+
+	// Idempotencia: no crear un segundo reintento del mismo trabajo.
+	if existing, found, _ := j.repo.FindRetryOf(r.Context(), job.ID); found {
+		writeJSON(w, http.StatusOK, existing)
+		return
+	}
+
+	retryID := uuid.NewString()
+	retry, err := j.repo.CreateJob(r.Context(), repository.CreateJobParams{
+		ID:           retryID,
+		UserID:       job.UserID,
+		OriginalName: job.OriginalName,
+		Format:       job.Format,
+		ObjectKey:    job.ObjectKey, // se reutiliza el original ya subido
+		RetryOf:      &job.ID,
+		Attempt:      job.Attempt + 1,
+	})
+	if err != nil {
+		internalError(w, j.log, err)
+		return
+	}
+
+	if err := j.publisher.Publish(r.Context(), domain.JobMessage{
+		JobID:     retry.ID,
+		UserID:    job.UserID,
+		Format:    job.Format,
+		ObjectKey: job.ObjectKey,
+		Attempt:   retry.Attempt,
+	}); err != nil {
+		j.log.Error("retry: publish message", "error", err)
+		_ = j.repo.UpdateJobStatus(r.Context(), retry.ID, domain.JobStatusFailed)
+		writeError(w, http.StatusInternalServerError, "no se pudo encolar el reintento")
+		return
+	}
+
+	j.log.Info("job reintentado", "job_id", retry.ID, "retry_of", job.ID, "attempt", retry.Attempt)
+	writeJSON(w, http.StatusCreated, retry)
+}
+
 func contentTypeFor(format domain.DocFormat) string {
 	switch format {
 	case domain.FormatPDF:
@@ -157,6 +237,12 @@ func contentTypeFor(format domain.DocFormat) string {
 		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 	case domain.FormatEPUB:
 		return "application/epub+zip"
+	case domain.FormatMD:
+		return "text/markdown; charset=utf-8"
+	case domain.FormatTXT:
+		return "text/plain; charset=utf-8"
+	case domain.FormatHTML:
+		return "text/html; charset=utf-8"
 	default:
 		return "application/octet-stream"
 	}

@@ -60,10 +60,23 @@ func (p *Postgres) GetJobName(ctx context.Context, jobID string) (domain.Job, er
 	return j, nil
 }
 
+// IsCanceled indica si el usuario canceló el trabajo mientras se procesaba.
+// El worker lo consulta antes de publicar: un trabajo cancelado no genera bundle.
+func (p *Postgres) IsCanceled(ctx context.Context, jobID string) (bool, error) {
+	var status domain.JobStatus
+	if err := p.pool.QueryRow(ctx,
+		`SELECT status FROM jobs WHERE id = $1`, jobID).Scan(&status); err != nil {
+		return false, fmt.Errorf("check canceled: %w", err)
+	}
+	return status == domain.JobStatusCanceled, nil
+}
+
 func (p *Postgres) MarkCompleted(ctx context.Context, jobID string) error {
+	// El filtro por status evita que un job cancelado vuelva a "completed".
 	_, err := p.pool.Exec(ctx, `
-		UPDATE jobs SET status = $1, updated_at = now() WHERE id = $2`,
-		domain.JobStatusCompleted, jobID)
+		UPDATE jobs SET status = $1, updated_at = now()
+		WHERE id = $2 AND status <> $3`,
+		domain.JobStatusCompleted, jobID, domain.JobStatusCanceled)
 	if err != nil {
 		return fmt.Errorf("mark job completed: %w", err)
 	}
@@ -71,19 +84,27 @@ func (p *Postgres) MarkCompleted(ctx context.Context, jobID string) error {
 }
 
 func (p *Postgres) MarkFailed(ctx context.Context, jobID, errMsg string) error {
+	// El filtro por status evita que un job cancelado pase a "failed".
 	_, err := p.pool.Exec(ctx, `
-		UPDATE jobs SET status = $1, error_message = $2, updated_at = now() WHERE id = $3`,
-		domain.JobStatusFailed, errMsg, jobID)
+		UPDATE jobs SET status = $1, error_message = $2, updated_at = now()
+		WHERE id = $3 AND status <> $4`,
+		domain.JobStatusFailed, errMsg, jobID, domain.JobStatusCanceled)
 	if err != nil {
 		return fmt.Errorf("mark job failed: %w", err)
 	}
 	return nil
 }
 
-func (p *Postgres) CreateBundle(ctx context.Context, id, jobID, path string) error {
+// CreateBundle registra el bundle publicado junto con su clasificación de
+// validación y las advertencias de conformidad detectadas.
+func (p *Postgres) CreateBundle(ctx context.Context, id, jobID, path, validation string, warnings []string) error {
+	if warnings == nil {
+		warnings = []string{}
+	}
 	_, err := p.pool.Exec(ctx, `
-		INSERT INTO bundles (id, job_id, path) VALUES ($1, $2, $3)`,
-		id, jobID, path)
+		INSERT INTO bundles (id, job_id, path, validation, warnings)
+		VALUES ($1, $2, $3, $4, $5)`,
+		id, jobID, path, validation, warnings)
 	if err != nil {
 		return fmt.Errorf("insert bundle: %w", err)
 	}

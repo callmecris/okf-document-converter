@@ -128,7 +128,7 @@ func processJob(
 		return failJob(db, msg.JobID, err)
 	}
 
-	segments, err := pipeline.Convert(ctx, converter.Options{
+	conv, err := pipeline.Convert(ctx, converter.Options{
 		Format:       msg.Format,
 		SourcePath:   srcPath,
 		WorkDir:      workDir,
@@ -138,20 +138,36 @@ func processJob(
 		return failJob(db, msg.JobID, err)
 	}
 
-	result, err := okf.Build(ctx, workDir, segments, okf.Meta{
+	result, err := okf.Build(ctx, workDir, conv.Segments, okf.Meta{
 		JobID:        msg.JobID,
 		UserID:       msg.UserID,
 		OriginalName: job.OriginalName,
 		Format:       string(msg.Format),
 		SourcePath:   srcPath,
 		ConvertedAt:  time.Now(),
+		Assets:       conv.Assets,
 	})
 	if err != nil {
 		return failJob(db, msg.JobID, err)
 	}
 
-	if err := okf.Validate(result.Dir); err != nil {
+	// Cancelación: si el usuario canceló mientras se converta, no se publica
+	// nada. Se comprueba justo antes de subir, que es el punto de no retorno.
+	if canceled, err := db.IsCanceled(ctx, msg.JobID); err != nil {
 		return failJob(db, msg.JobID, err)
+	} else if canceled {
+		log.Info("job cancelado por el usuario; no se publica el bundle", "job_id", msg.JobID)
+		return nil
+	}
+
+	// Validación previa a la publicación: un bundle inválido no se sube nunca,
+	// por lo que no queda disponible para descarga.
+	report := okf.Validate(result.Dir)
+	if !report.Publishable() {
+		return failJob(db, msg.JobID, report.Err)
+	}
+	for _, w := range report.Warnings {
+		log.Warn("bundle con advertencia de conformidad", "job_id", msg.JobID, "advertencia", w)
 	}
 
 	if err := store.UploadDir(ctx, store.BundlesBucket(), result.Dir, result.BundlePath); err != nil {
@@ -161,7 +177,7 @@ func processJob(
 	if err := db.MarkCompleted(ctx, msg.JobID); err != nil {
 		return err
 	}
-	if err := db.CreateBundle(ctx, uuid.NewString(), msg.JobID, result.BundlePath); err != nil {
+	if err := db.CreateBundle(ctx, uuid.NewString(), msg.JobID, result.BundlePath, string(report.Level), report.Warnings); err != nil {
 		log.Error("job completado pero falló el registro del bundle", "job_id", msg.JobID, "error", err)
 	}
 
@@ -169,7 +185,10 @@ func processJob(
 		"job_id", msg.JobID,
 		"format", msg.Format,
 		"conceptos", len(result.Segments),
+		"recursos", conv.Assets,
 		"bundle", result.BundlePath,
+		"validacion", report.Level,
+		"advertencias", len(report.Warnings),
 	)
 	return nil
 }

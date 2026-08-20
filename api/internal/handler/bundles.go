@@ -23,8 +23,11 @@ type bundleFile struct {
 }
 
 type bundleResponse struct {
-	Path  string       `json:"path"`
-	Files []bundleFile `json:"files"`
+	Path string `json:"path"`
+	// Validation clasifica el resultado: "valid" | "valid_with_warnings".
+	Validation domain.ValidationLevel `json:"validation"`
+	Warnings   []string               `json:"warnings"`
+	Files      []bundleFile           `json:"files"`
 }
 
 // bundleFilesFor lista los archivos del bundle de un job. Las URLs se sirven a
@@ -41,7 +44,16 @@ func bundleFilesFor(ctx context.Context, repo *repository.Postgres, store *stora
 		return nil, err
 	}
 
-	resp := &bundleResponse{Path: bundle.Path, Files: make([]bundleFile, 0, len(keys))}
+	warnings := bundle.Warnings
+	if warnings == nil {
+		warnings = []string{}
+	}
+	resp := &bundleResponse{
+		Path:       bundle.Path,
+		Validation: bundle.Validation,
+		Warnings:   warnings,
+		Files:      make([]bundleFile, 0, len(keys)),
+	}
 	for _, k := range keys {
 		rel := strings.TrimPrefix(k, bundle.Path+"/")
 		resp.Files = append(resp.Files, bundleFile{
