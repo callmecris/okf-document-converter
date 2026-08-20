@@ -30,6 +30,8 @@ type Meta struct {
 	Format       string
 	SourcePath   string
 	ConvertedAt  time.Time
+	// Assets es el número de recursos extraídos a assets/.
+	Assets int
 }
 
 type BuildResult struct {
@@ -58,6 +60,13 @@ func Build(ctx context.Context, workDir string, segments []converter.Segment, me
 		dst := filepath.Join(root, "conceptos", filepath.Base(seg.File))
 		if err := os.Rename(seg.File, dst); err != nil {
 			return nil, fmt.Errorf("move segment to bundle: %w", err)
+		}
+	}
+
+	// Los recursos extraídos (imágenes) acompañan al bundle en assets/.
+	if src := filepath.Join(workDir, "assets"); dirHasFiles(src) {
+		if err := os.Rename(src, filepath.Join(root, "assets")); err != nil {
+			return nil, fmt.Errorf("move assets to bundle: %w", err)
 		}
 	}
 
@@ -103,6 +112,7 @@ func logMarkdown(meta Meta, segments int) string {
 		{"SHA-256 (original)", hash},
 		{"Tamaño (bytes)", fmt.Sprintf("%d", size)},
 		{"Conceptos generados", fmt.Sprintf("%d", segments)},
+		{"Recursos extraídos", fmt.Sprintf("%d", meta.Assets)},
 		{"Fecha de conversión", meta.ConvertedAt.UTC().Format(time.RFC3339)},
 		{"Motor", "okf-worker"},
 	} {
@@ -129,4 +139,10 @@ func sourceSize(path string) int64 {
 		return info.Size()
 	}
 	return 0
+}
+
+// dirHasFiles indica si un directorio existe y contiene al menos una entrada.
+func dirHasFiles(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	return err == nil && len(entries) > 0
 }
