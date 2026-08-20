@@ -3,6 +3,7 @@ import { clearToken, getToken, listJobs, setToken as persistToken, type Job, typ
 import Login from './components/Login'
 import Upload from './components/Upload'
 import JobList from './components/JobList'
+import Metrics from './components/Metrics'
 
 const ACTIVE: JobStatus[] = ['pending', 'processing']
 
@@ -14,6 +15,8 @@ export default function App() {
   const [token, setToken] = useState<string>(() => getToken())
   const [jobs, setJobs] = useState<Job[]>([])
   const [error, setError] = useState('')
+  // Se incrementa en cada recarga de trabajos para refrescar las métricas.
+  const [refreshKey, setRefreshKey] = useState(0)
   const timer = useRef<number | null>(null)
 
   // Token inválido/expirado: volver al login automáticamente.
@@ -31,6 +34,7 @@ export default function App() {
     if (!token) return
     try {
       setJobs(await listJobs())
+      setRefreshKey((k) => k + 1)
       setError('')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al cargar trabajos')
@@ -79,7 +83,7 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-sm font-bold text-slate-800">Conversor de Documentos</h1>
-              <p className="text-xs text-slate-400">PDF · DOCX · EPUB → Markdown</p>
+              <p className="text-xs text-slate-400">MD · TXT · HTML · PDF · DOCX · EPUB → Markdown</p>
             </div>
           </div>
           <button
@@ -93,6 +97,8 @@ export default function App() {
 
       <main className="mx-auto max-w-3xl space-y-6 px-4 py-8">
         <Upload onUploaded={() => void load()} />
+
+        <Metrics refreshKey={refreshKey} />
 
         {error && (
           <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -119,7 +125,7 @@ export default function App() {
               </button>
             )}
           </div>
-          <JobList jobs={jobs} />
+          <JobList jobs={jobs} onRetried={() => void load()} />
         </section>
       </main>
     </div>

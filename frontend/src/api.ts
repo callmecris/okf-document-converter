@@ -1,5 +1,5 @@
-export type Format = 'pdf' | 'docx' | 'epub'
-export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed'
+export type Format = 'md' | 'txt' | 'html' | 'pdf' | 'docx' | 'epub'
+export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'canceled'
 
 export type BundleFile = {
   path: string
@@ -7,8 +7,13 @@ export type BundleFile = {
   url: string
 }
 
+export type ValidationLevel = 'valid' | 'valid_with_warnings'
+
 export type Bundle = {
   path: string
+  /** Clasificación del resultado, separada de la validez de plataforma. */
+  validation: ValidationLevel
+  warnings: string[]
   files: BundleFile[]
 }
 
@@ -22,6 +27,9 @@ export type Job = {
   error_message?: string
   created_at: string
   updated_at: string
+  /** Id del trabajo fallido que este trabajo reintenta. */
+  retry_of?: string
+  attempt: number
   bundle?: Bundle
 }
 
@@ -113,6 +121,16 @@ export function getJob(id: string): Promise<Job> {
   return request(`/jobs/${id}`)
 }
 
+/** Cancela un trabajo pendiente o en curso. */
+export function cancelJob(id: string): Promise<Job> {
+  return request(`/jobs/${id}/cancel`, { method: 'POST' })
+}
+
+/** Reintenta un trabajo fallido o cancelado reutilizando el original ya almacenado. */
+export function retryJob(id: string): Promise<Job> {
+  return request(`/jobs/${id}/retry`, { method: 'POST' })
+}
+
 export async function uploadJob(file: File): Promise<Job> {
   const form = new FormData()
   form.append('file', file)
@@ -161,6 +179,9 @@ export async function openBundleFile(url: string, fallbackName: string): Promise
 }
 
 export const FORMAT_LABEL: Record<Format, string> = {
+  md: 'Markdown',
+  txt: 'Texto',
+  html: 'HTML',
   pdf: 'PDF',
   docx: 'DOCX',
   epub: 'EPUB',
@@ -171,6 +192,25 @@ export const STATUS_LABEL: Record<JobStatus, string> = {
   processing: 'Procesando',
   completed: 'Completado',
   failed: 'Fallido',
+  canceled: 'Cancelado',
+}
+
+export type Metrics = {
+  jobs_by_status: Record<string, number>
+  jobs_by_format: Record<string, number>
+  bundles_by_validation: Record<string, number>
+  total_jobs: number
+  total_bundles: number
+  total_users: number
+  retries: number
+  avg_duration_seconds: number
+}
+
+/** Métricas agregadas del flujo de trabajos (endpoint operativo). */
+export async function getMetrics(): Promise<Metrics> {
+  const res = await fetch('/api/v1/metrics')
+  if (!res.ok) throw new Error(friendlyError(res.status))
+  return res.json() as Promise<Metrics>
 }
 
 export function formatDate(iso: string): string {

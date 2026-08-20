@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { uploadJob, MAX_UPLOAD_MB, type Job } from '../api'
 
-const ACCEPT = '.pdf,.docx,.epub'
+const ACCEPT = '.md,.txt,.html,.pdf,.docx,.epub'
 const MAX_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 
 type Props = {
@@ -49,7 +49,7 @@ export default function Upload({ onUploaded }: Props) {
         if (dropped && ACCEPT.split(',').some((ext) => dropped.name.toLowerCase().endsWith(ext))) {
           setFile(dropped)
         } else {
-          setError('Solo se admiten archivos PDF, DOCX o EPUB')
+          setError('Solo se admiten archivos MD, TXT, HTML, PDF, DOCX o EPUB')
         }
       }}
       className={`rounded-2xl border-2 border-dashed p-6 text-center transition ${
@@ -87,7 +87,7 @@ export default function Upload({ onUploaded }: Props) {
       <p className="mt-1 text-xs text-slate-400">
         {file
           ? `${(file.size / 1024 / 1024).toFixed(2)} MB`
-          : `PDF, DOCX o EPUB · máx. ${MAX_UPLOAD_MB} MB`}
+          : `MD, TXT, HTML, PDF, DOCX o EPUB · máx. ${MAX_UPLOAD_MB} MB`}
       </p>
       <div className="mt-4 flex justify-center gap-3">
         <button

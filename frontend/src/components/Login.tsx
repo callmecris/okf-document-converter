@@ -32,7 +32,7 @@ export default function Login({ onAuth }: Props) {
             OKF
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-white">Conversor de Documentos</h1>
-          <p className="mt-1 text-sm text-slate-400">PDF · DOCX · EPUB → Bundles Markdown</p>
+          <p className="mt-1 text-sm text-slate-400">MD · TXT · HTML · PDF · DOCX · EPUB → Bundles Markdown</p>
         </div>
 
         <div className="rounded-2xl bg-white p-6 shadow-xl">
