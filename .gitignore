@@ -12,8 +12,8 @@ bin/
 *.dll
 *.so
 *.dylib
-# Directorios de compilación y herramientas de Go
-pkg/
+# Directorios de compilación y herramientas de Go.
+# OJO: NO ignorar pkg/ — aquí vive el código compartido (pkg/domain, pkg/logger).
 vendor/
 
 # Docker
@@ -45,3 +45,9 @@ dist-ssr/
 .idea/
 *.sublime-project
 *.sublime-workspace
+
+# Documentos de prueba generados (se recrean con scripts/testdata/generate.sh)
+scripts/testdata/out/
+
+# Material del curso (no es codigo del proyecto)
+*proyecto-nivelacion-okf.pdf
