@@ -106,6 +106,15 @@ func (e *EpubConverter) Convert(ctx context.Context, opts Options) ([]Segment, e
 			return nil, fmt.Errorf("html to markdown %s: %w", entry.src, err)
 		}
 
+		// Las imágenes del capítulo viven dentro del propio zip: se extraen a
+		// assets/ y se reescriben las referencias del markdown.
+		if opts.Assets != nil {
+			markdown, err = e.extractImages(markdown, entry.src, files, opts.Assets)
+			if err != nil {
+				return nil, err
+			}
+		}
+
 		title := entry.title
 		if strings.TrimSpace(title) == "" {
 			title = fmt.Sprintf("Capítulo %d", order)
@@ -247,6 +256,52 @@ func (e *EpubConverter) fallbackEntries(files map[string]*zip.File) []epubEntry 
 		})
 	}
 	return chapters
+}
+
+// extractImages copia a assets/ las imágenes referenciadas por un capítulo y
+// devuelve el markdown con los enlaces reescritos. Las rutas de las imágenes
+// son relativas al capítulo dentro del zip.
+func (e *EpubConverter) extractImages(markdown, chapterSrc string, files map[string]*zip.File, assets *assetCollector) (string, error) {
+	chapterDir := path.Dir(path.Clean(strings.TrimPrefix(chapterSrc, "/")))
+
+	var failed error
+	out := rewriteMarkdownImages(markdown, func(src string) string {
+		if isRemoteRef(src) || failed != nil {
+			return ""
+		}
+		// La ruta de la imagen puede venir relativa al capítulo o a la raíz.
+		key := path.Clean(path.Join(chapterDir, src))
+		img, ok := files[key]
+		if !ok {
+			if img = e.resolveChapter(files, src); img == nil {
+				return "" // referencia rota dentro del epub: se deja como está
+			}
+			key = img.Name
+		}
+
+		rc, err := img.Open()
+		if err != nil {
+			failed = fmt.Errorf("open asset %s: %w", key, err)
+			return ""
+		}
+		defer rc.Close()
+
+		var buf bytes.Buffer
+		if _, err := io.Copy(&buf, rc); err != nil {
+			failed = fmt.Errorf("read asset %s: %w", key, err)
+			return ""
+		}
+		name, err := assets.add(key, buf.Bytes())
+		if err != nil {
+			failed = err
+			return ""
+		}
+		return name
+	})
+	if failed != nil {
+		return "", failed
+	}
+	return out, nil
 }
 
 // resolveChapter localiza el archivo destino (las rutas del índice suelen ser
