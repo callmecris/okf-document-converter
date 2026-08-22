@@ -35,7 +35,7 @@ contenedores), no un motor de parsing: se usan herramientas livianas
 2. Un worker **reclama** el job de forma atómica (`UPDATE ... WHERE status='pending'`):
    los mensajes duplicados se descartan (idempotencia).
 3. El worker descarga el original, lo convierte a Markdown y lo segmenta en
-   conceptos (`capitulo-01.md`, `capitulo-02.md`, ...).
+   conceptos (`fragmento-01.md`, `fragmento-02.md`, ...).
 4. Genera el bundle OKF, lo valida y lo sube a MinIO.
 5. El estado del job pasa a `completed` y el bundle queda disponible vía la API
    (`GET /jobs/{id}/download` para el `.zip`, o `GET /jobs/{id}/bundle/{path}`
@@ -59,7 +59,7 @@ bundles/<userId>/<jobId>/
 ├── index.md            # tabla de contenidos con links relativos
 ├── log.md              # SHA-256, tamaño, formato, recursos, fecha
 ├── conceptos/
-│   ├── capitulo-01.md
+│   ├── fragmento-01.md
 │   └── ...
 └── assets/             # recursos extraídos, referenciados como ../assets/<x>
     └── diagrama.png

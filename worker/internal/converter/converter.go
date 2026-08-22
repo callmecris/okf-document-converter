@@ -86,7 +86,7 @@ func writeSegment(workDir string, order int, title, content string) (Segment, er
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return Segment{}, fmt.Errorf("create conceptos dir: %w", err)
 	}
-	file := filepath.Join(dir, fmt.Sprintf("capitulo-%02d.md", order))
+	file := filepath.Join(dir, fmt.Sprintf("fragmento-%02d.md", order))
 	body := fmt.Sprintf("# %s\n\n%s\n", title, content)
 	if strings.HasPrefix(strings.TrimSpace(content), "#") {
 		body = strings.TrimSpace(content) + "\n"

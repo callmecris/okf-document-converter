@@ -173,7 +173,7 @@ export async function downloadBundleFile(url: string, fallbackName: string): Pro
 }
 
 export const FORMAT_LABEL: Record<Format, string> = {
-  md: 'Markdown',
+  md: 'MD',
   txt: 'Texto',
   html: 'HTML',
   pdf: 'PDF',
@@ -195,16 +195,13 @@ export type Metrics = {
   bundles_by_validation: Record<string, number>
   total_jobs: number
   total_bundles: number
-  total_users: number
   retries: number
   avg_duration_seconds: number
 }
 
-/** Métricas agregadas del flujo de trabajos (endpoint operativo). */
+/** Métricas de actividad del usuario autenticado. */
 export async function getMetrics(): Promise<Metrics> {
-  const res = await fetch('/api/v1/metrics')
-  if (!res.ok) throw new Error(friendlyError(res.status))
-  return res.json() as Promise<Metrics>
+  return request('/metrics')
 }
 
 export function formatDate(iso: string): string {

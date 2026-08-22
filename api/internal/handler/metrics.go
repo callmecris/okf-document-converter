@@ -7,12 +7,13 @@ import (
 	"sort"
 	"strings"
 
+	"okf/api/internal/middleware"
 	"okf/api/internal/repository"
 )
 
-// Metrics expone la observabilidad básica del flujo de trabajos.
-// Es un endpoint operativo (no lleva datos de ningún usuario concreto), por
-// lo que no requiere autenticación: solo agregados de toda la plataforma.
+// Metrics expone la actividad de conversión. El endpoint JSON (/api/v1/metrics)
+// va tras JWTAuth y devuelve SOLO la actividad del usuario autenticado; el
+// endpoint Prometheus (/metrics) es operativo y agrega toda la plataforma.
 type Metrics struct {
 	repo *repository.Postgres
 	log  *slog.Logger
@@ -22,9 +23,9 @@ func NewMetrics(repo *repository.Postgres, log *slog.Logger) *Metrics {
 	return &Metrics{repo: repo, log: log}
 }
 
-// JSON devuelve las métricas en formato JSON (para el frontend).
+// JSON devuelve las métricas del usuario autenticado en formato JSON.
 func (m *Metrics) JSON(w http.ResponseWriter, r *http.Request) {
-	metrics, err := m.repo.GetMetrics(r.Context())
+	metrics, err := m.repo.GetMetrics(r.Context(), middleware.UserID(r))
 	if err != nil {
 		internalError(w, m.log, err)
 		return
@@ -32,10 +33,11 @@ func (m *Metrics) JSON(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, metrics)
 }
 
-// Prometheus expone las mismas métricas en formato de exposición Prometheus,
-// para que puedan recolectarse con herramientas estándar.
+// Prometheus expone las métricas globales del sistema en formato de
+// exposición Prometheus, para que puedan recolectarse con herramientas
+// estándar. No se expone a través del frontend.
 func (m *Metrics) Prometheus(w http.ResponseWriter, r *http.Request) {
-	metrics, err := m.repo.GetMetrics(r.Context())
+	metrics, err := m.repo.GetMetrics(r.Context(), "")
 	if err != nil {
 		internalError(w, m.log, err)
 		return
@@ -67,10 +69,6 @@ func (m *Metrics) Prometheus(w http.ResponseWriter, r *http.Request) {
 	b.WriteString("# HELP okf_retries_total Trabajos creados como reintento de otro.\n")
 	b.WriteString("# TYPE okf_retries_total counter\n")
 	fmt.Fprintf(&b, "okf_retries_total %d\n", metrics.Retries)
-
-	b.WriteString("# HELP okf_users_total Usuarios registrados.\n")
-	b.WriteString("# TYPE okf_users_total gauge\n")
-	fmt.Fprintf(&b, "okf_users_total %d\n", metrics.TotalUsers)
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	_, _ = w.Write([]byte(b.String()))

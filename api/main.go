@@ -72,7 +72,7 @@ func run() error {
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("GET /metrics", metrics.Prometheus)
-	mux.HandleFunc("GET /api/v1/metrics", metrics.JSON)
+	mux.Handle("GET /api/v1/metrics", middleware.JWTAuth(cfg.JWTSecret, http.HandlerFunc(metrics.JSON)))
 	mux.HandleFunc("POST /api/v1/auth/register", auth.Register)
 	mux.HandleFunc("POST /api/v1/auth/login", auth.Login)
 	mux.Handle("POST /api/v1/jobs", middleware.JWTAuth(cfg.JWTSecret, http.HandlerFunc(jobs.Create)))

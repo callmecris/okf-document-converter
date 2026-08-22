@@ -77,7 +77,7 @@ EST=$(status "${JOBS[estructurado.md]}")
 check "conceptos del documento estructurado" \
   "$(echo "$EST" | jqr "len([f for f in d['bundle']['files'] if '/conceptos/' in f['path']])")" "3"
 IDX=$(curl -s -H "Authorization: Bearer $TOK_A" "$API/api/v1/jobs/${JOBS[estructurado.md]}/bundle/index.md")
-if echo "$IDX" | grep -q "capitulo-01.md" && echo "$IDX" | grep -q "capitulo-03.md"; then
+if echo "$IDX" | grep -q "fragmento-01.md" && echo "$IDX" | grep -q "fragmento-03.md"; then
   ok "index.md enlaza los conceptos en orden"
 else
   bad "index.md no enlaza todos los conceptos"
@@ -85,8 +85,8 @@ fi
 
 echo
 echo "== 5. Sin contaminacion entre conceptos =="
-C1=$(curl -s -H "Authorization: Bearer $TOK_A" "$API/api/v1/jobs/${JOBS[estructurado.md]}/bundle/conceptos/capitulo-01.md")
-C2=$(curl -s -H "Authorization: Bearer $TOK_A" "$API/api/v1/jobs/${JOBS[estructurado.md]}/bundle/conceptos/capitulo-02.md")
+C1=$(curl -s -H "Authorization: Bearer $TOK_A" "$API/api/v1/jobs/${JOBS[estructurado.md]}/bundle/conceptos/fragmento-01.md")
+C2=$(curl -s -H "Authorization: Bearer $TOK_A" "$API/api/v1/jobs/${JOBS[estructurado.md]}/bundle/conceptos/fragmento-02.md")
 echo "$C1" | grep -q TOKEN_UNO && ok "concepto 1 tiene su contenido" || bad "concepto 1 sin su contenido"
 if echo "$C2" | grep -q TOKEN_UNO; then bad "concepto 2 arrastra el contenido del 1"; else ok "concepto 2 no arrastra contenido del 1"; fi
 
@@ -143,7 +143,7 @@ if [ -f "$DOCS/con-imagenes.docx" ]; then
   CT=$(curl -s -o /dev/null -w '%{content_type}' -H "Authorization: Bearer $TOK_A" "$API$ASSET")
   case "$CT" in image/*) ok "el recurso se sirve como $CT";; *) bad "content-type del recurso: $CT";; esac
 
-  C1=$(curl -s -H "Authorization: Bearer $TOK_A" "$API/api/v1/jobs/$JIMG/bundle/conceptos/capitulo-01.md")
+  C1=$(curl -s -H "Authorization: Bearer $TOK_A" "$API/api/v1/jobs/$JIMG/bundle/conceptos/fragmento-01.md")
   echo "$C1" | grep -q "\.\./assets/" && ok "el concepto referencia ../assets/" || bad "el concepto no referencia assets/"
 else
   echo "  (omitido: falta con-imagenes.docx)"

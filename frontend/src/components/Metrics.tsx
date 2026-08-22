@@ -16,7 +16,7 @@ type Props = {
   refreshKey: number
 }
 
-/** Observabilidad básica del flujo de trabajos de toda la plataforma. */
+/** Resumen de la actividad de conversión del usuario autenticado. */
 export default function Metrics({ refreshKey }: Props) {
   const [data, setData] = useState<MetricsData | null>(null)
   const [open, setOpen] = useState(false)
@@ -46,7 +46,7 @@ export default function Metrics({ refreshKey }: Props) {
         onClick={() => setOpen(!open)}
         className="flex w-full items-center justify-between text-left"
       >
-        <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">Métricas</h2>
+        <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">Tu actividad</h2>
         <span className="text-xs font-semibold text-indigo-600">
           {open ? 'Ocultar' : 'Ver detalle'}
         </span>
@@ -67,7 +67,6 @@ export default function Metrics({ refreshKey }: Props) {
           <Stat label="Bundles publicados" value={data.total_bundles} />
           <Stat label="Duración media" value={duration} />
           <Stat label="Reintentos" value={data.retries} />
-          <Stat label="Usuarios" value={data.total_users} />
           <Stat
             label="Con advertencias"
             value={data.bundles_by_validation['valid_with_warnings'] ?? 0}
@@ -83,10 +82,6 @@ export default function Metrics({ refreshKey }: Props) {
               ))}
             </dd>
           </div>
-
-          <p className="col-span-2 text-xs text-slate-400 sm:col-span-3">
-            También disponibles en formato Prometheus en <code>/metrics</code>.
-          </p>
         </dl>
       )}
     </section>

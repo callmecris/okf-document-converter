@@ -27,9 +27,9 @@ const okLog = "# Log\n- **SHA-256 (original):** abc\n- **Formato:** MD\n- **Conc
 
 func validBundle() map[string]string {
 	return map[string]string{
-		"index.md":                "# Índice\n\n| 1 | Uno | [capitulo-01.md](conceptos/capitulo-01.md) |\n",
+		"index.md":                "# Índice\n\n| 1 | Uno | [fragmento-01.md](conceptos/fragmento-01.md) |\n",
 		"log.md":                  okLog,
-		"conceptos/capitulo-01.md": "# Uno\n\nContenido suficiente del concepto.\n",
+		"conceptos/fragmento-01.md": "# Uno\n\nContenido suficiente del concepto.\n",
 	}
 }
 
@@ -64,7 +64,7 @@ func TestValidateMissingRequiredFilesIsInvalid(t *testing.T) {
 
 func TestValidateEmptyConceptsIsInvalid(t *testing.T) {
 	files := validBundle()
-	delete(files, "conceptos/capitulo-01.md")
+	delete(files, "conceptos/fragmento-01.md")
 	files["index.md"] = "# Índice\n\nsin links\n"
 
 	root := buildBundle(t, files)
@@ -92,7 +92,7 @@ func TestValidateBrokenLinkIsInvalid(t *testing.T) {
 // Un concepto huérfano no invalida el bundle: lo degrada a "con advertencias".
 func TestValidateOrphanConceptWarns(t *testing.T) {
 	files := validBundle()
-	files["conceptos/capitulo-02.md"] = "# Dos\n\nContenido del segundo concepto.\n"
+	files["conceptos/fragmento-02.md"] = "# Dos\n\nContenido del segundo concepto.\n"
 
 	report := Validate(buildBundle(t, files))
 	if report.Level != LevelValidWithWarnings {
@@ -108,7 +108,7 @@ func TestValidateOrphanConceptWarns(t *testing.T) {
 
 func TestValidateConceptWithoutHeadingWarns(t *testing.T) {
 	files := validBundle()
-	files["conceptos/capitulo-01.md"] = "Texto sin encabezado inicial del concepto.\n"
+	files["conceptos/fragmento-01.md"] = "Texto sin encabezado inicial del concepto.\n"
 
 	report := Validate(buildBundle(t, files))
 	if report.Level != LevelValidWithWarnings {
@@ -133,7 +133,7 @@ func TestValidateLogWithoutTraceabilityWarns(t *testing.T) {
 // no invalida el bundle.
 func TestValidateMissingAssetWarns(t *testing.T) {
 	files := validBundle()
-	files["conceptos/capitulo-01.md"] = "# Uno\n\n![falta](../assets/no-existe.png)\n\nContenido del concepto.\n"
+	files["conceptos/fragmento-01.md"] = "# Uno\n\n![falta](../assets/no-existe.png)\n\nContenido del concepto.\n"
 
 	report := Validate(buildBundle(t, files))
 	if report.Level != LevelValidWithWarnings {
@@ -156,7 +156,7 @@ func TestValidateMissingAssetWarns(t *testing.T) {
 // Un recurso presente en assets/ no genera advertencia.
 func TestValidateExistingAssetIsClean(t *testing.T) {
 	files := validBundle()
-	files["conceptos/capitulo-01.md"] = "# Uno\n\n![ok](../assets/img.png)\n\nContenido del concepto.\n"
+	files["conceptos/fragmento-01.md"] = "# Uno\n\n![ok](../assets/img.png)\n\nContenido del concepto.\n"
 	files["assets/img.png"] = "PNGDATA"
 
 	report := Validate(buildBundle(t, files))

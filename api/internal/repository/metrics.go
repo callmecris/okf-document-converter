@@ -7,7 +7,8 @@ import (
 	"okf/pkg/domain"
 )
 
-// Metrics resume el estado del flujo de trabajos de la plataforma.
+// Metrics resume la actividad de conversión de un usuario (o del sistema
+// completo si userID es vacío; reservado al endpoint operativo Prometheus).
 type Metrics struct {
 	// JobsByStatus cuenta los trabajos por estado (pending, processing, ...).
 	JobsByStatus map[domain.JobStatus]int `json:"jobs_by_status"`
@@ -18,21 +19,28 @@ type Metrics struct {
 	// Totales agregados.
 	TotalJobs    int `json:"total_jobs"`
 	TotalBundles int `json:"total_bundles"`
-	TotalUsers   int `json:"total_users"`
 	Retries      int `json:"retries"`
 	// AvgDurationSeconds es la duración media de las conversiones terminadas.
 	AvgDurationSeconds float64 `json:"avg_duration_seconds"`
 }
 
-// GetMetrics agrega el estado del sistema en una sola pasada por tabla.
-func (p *Postgres) GetMetrics(ctx context.Context) (Metrics, error) {
+// GetMetrics agrega el flujo de trabajos filtrado por usuario en una sola
+// pasada por tabla. Con userID vacío no filtra (solo para Prometheus).
+func (p *Postgres) GetMetrics(ctx context.Context, userID string) (Metrics, error) {
+	// nil => sin filtro (Prometheus); los parámetros van tipados como UUID.
+	var uid *string
+	if userID != "" {
+		uid = &userID
+	}
 	m := Metrics{
 		JobsByStatus:        map[domain.JobStatus]int{},
 		JobsByFormat:        map[domain.DocFormat]int{},
 		BundlesByValidation: map[domain.ValidationLevel]int{},
 	}
 
-	rows, err := p.pool.Query(ctx, `SELECT status, count(*) FROM jobs GROUP BY status`)
+	rows, err := p.pool.Query(ctx, `
+		SELECT status, count(*) FROM jobs WHERE $1::uuid IS NULL OR user_id = $1::uuid GROUP BY status`,
+		uid)
 	if err != nil {
 		return m, fmt.Errorf("metrics by status: %w", err)
 	}
@@ -51,7 +59,9 @@ func (p *Postgres) GetMetrics(ctx context.Context) (Metrics, error) {
 		return m, err
 	}
 
-	rows, err = p.pool.Query(ctx, `SELECT format, count(*) FROM jobs GROUP BY format`)
+	rows, err = p.pool.Query(ctx, `
+		SELECT format, count(*) FROM jobs WHERE $1::uuid IS NULL OR user_id = $1::uuid GROUP BY format`,
+		uid)
 	if err != nil {
 		return m, fmt.Errorf("metrics by format: %w", err)
 	}
@@ -69,7 +79,13 @@ func (p *Postgres) GetMetrics(ctx context.Context) (Metrics, error) {
 		return m, err
 	}
 
-	rows, err = p.pool.Query(ctx, `SELECT validation, count(*) FROM bundles GROUP BY validation`)
+	// Los bundles no llevan user_id: se filtran por el trabajo propietario.
+	rows, err = p.pool.Query(ctx, `
+		SELECT b.validation, count(*)
+		FROM bundles b JOIN jobs j ON j.id = b.job_id
+		WHERE $1::uuid IS NULL OR j.user_id = $1::uuid
+		GROUP BY b.validation`,
+		uid)
 	if err != nil {
 		return m, fmt.Errorf("metrics by validation: %w", err)
 	}
@@ -91,18 +107,17 @@ func (p *Postgres) GetMetrics(ctx context.Context) (Metrics, error) {
 	// Duración media de las conversiones ya terminadas (created -> updated).
 	if err := p.pool.QueryRow(ctx, `
 		SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (updated_at - created_at))), 0)
-		FROM jobs WHERE status IN ($1, $2)`,
-		domain.JobStatusCompleted, domain.JobStatusFailed,
+		FROM jobs
+		WHERE status IN ($1, $2) AND ($3::uuid IS NULL OR user_id = $3::uuid)`,
+		domain.JobStatusCompleted, domain.JobStatusFailed, uid,
 	).Scan(&m.AvgDurationSeconds); err != nil {
 		return m, fmt.Errorf("metrics duration: %w", err)
 	}
 
 	if err := p.pool.QueryRow(ctx,
-		`SELECT count(*) FROM jobs WHERE retry_of IS NOT NULL`).Scan(&m.Retries); err != nil {
+		`SELECT count(*) FROM jobs WHERE retry_of IS NOT NULL AND ($1::uuid IS NULL OR user_id = $1::uuid)`,
+		uid).Scan(&m.Retries); err != nil {
 		return m, fmt.Errorf("metrics retries: %w", err)
-	}
-	if err := p.pool.QueryRow(ctx, `SELECT count(*) FROM users`).Scan(&m.TotalUsers); err != nil {
-		return m, fmt.Errorf("metrics users: %w", err)
 	}
 	return m, nil
 }

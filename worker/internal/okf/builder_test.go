@@ -14,8 +14,8 @@ import (
 func TestBuildProducesValidBundle(t *testing.T) {
 	workDir := t.TempDir()
 	segments := []converter.Segment{
-		{Title: "Inicio", Order: 1, File: filepath.Join(workDir, "capitulo-01.md")},
-		{Title: "Intro", Order: 2, File: filepath.Join(workDir, "capitulo-02.md")},
+		{Title: "Inicio", Order: 1, File: filepath.Join(workDir, "fragmento-01.md")},
+		{Title: "Intro", Order: 2, File: filepath.Join(workDir, "fragmento-02.md")},
 	}
 	if err := os.WriteFile(segments[0].File, []byte("# Inicio\n\nContenido del primer concepto.\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func TestBuildProducesValidBundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(index), "conceptos/capitulo-01.md") {
+	if !strings.Contains(string(index), "conceptos/fragmento-01.md") {
 		t.Errorf("index.md sin link al primer concepto: %s", index)
 	}
 

@@ -4,7 +4,7 @@
 //	├── index.md           -> tabla de contenidos con links a conceptos
 //	├── log.md             -> metadatos de conversión
 //	└── conceptos/
-//	    ├── capitulo-01.md
+//	    ├── fragmento-01.md
 //	    └── ...
 package okf
 

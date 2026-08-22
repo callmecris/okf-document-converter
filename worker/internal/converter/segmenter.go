@@ -42,7 +42,7 @@ func segmentMarkdown(workDir, srcPath string) ([]Segment, error) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("create conceptos dir: %w", err)
 		}
-		file := filepath.Join(dir, "capitulo-01.md")
+		file := filepath.Join(dir, "fragmento-01.md")
 		if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
 			return nil, fmt.Errorf("write segment %s: %w", file, err)
 		}

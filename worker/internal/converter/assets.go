@@ -126,7 +126,7 @@ func rewriteMarkdownImages(markdown string, resolve func(src string) string) str
 		if name == "" {
 			return match
 		}
-		// Desde conceptos/<capitulo>.md hay que subir un nivel.
+		// Desde conceptos/<fragmento>.md hay que subir un nivel.
 		return fmt.Sprintf("![%s](../%s/%s%s)", alt, assetsDirName, name, rest)
 	})
 }
