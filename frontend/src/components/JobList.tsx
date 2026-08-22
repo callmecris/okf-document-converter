@@ -2,10 +2,10 @@ import { useState } from 'react'
 import {
   cancelJob,
   downloadBundle,
+  downloadBundleFile,
   formatDate,
   FORMAT_LABEL,
   getJob,
-  openBundleFile,
   retryJob,
   STATUS_LABEL,
   type BundleFile,
@@ -262,9 +262,9 @@ function FileGroup({ title, files }: { title: string; files: BundleFile[] }) {
             <li key={f.path} className="flex items-center gap-2 text-sm">
               <span className="text-slate-400">·</span>
               <button
-                onClick={() => void openBundleFile(f.url, name)}
+                onClick={() => void downloadBundleFile(f.url, name)}
                 className="truncate text-indigo-600 underline-offset-2 hover:underline"
-                title={f.path}
+                title={`Descargar ${f.path}`}
               >
                 {name}
               </button>

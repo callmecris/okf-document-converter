@@ -5,6 +5,10 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"math"
 	"os"
 	"os/exec"
@@ -23,6 +27,10 @@ import (
 //	Nivel 2: heurística de encabezados por tamaño de fuente (pdftohtml -xml,
 //	fontspec) y patrón numérico de sección.
 //	Nivel 3: fallback por rangos de N páginas (pdftotext) - nunca falla.
+//
+// En los tres niveles las imágenes embebidas se copian a assets/ con filtros
+// anti-ruido (mínimo de tamaño, fondos/watermarks, tope por documento) y
+// deduplicación por contenido; los conceptos las referencian en ../assets/.
 type PdfConverter struct {
 	ChunkPages int
 }
@@ -107,7 +115,8 @@ func (p *PdfConverter) level1Bookmarks(ctx context.Context, opts Options) ([]Seg
 	segments := make([]Segment, 0, len(unique)+1)
 	// Contenido previo al primer marcador (portada, títulos, tablas).
 	if starts[0] > 0 {
-		seg, err := writeSegment(opts.WorkDir, 1, "Introducción", renderPdfLines(lines[:starts[0]]))
+		intro := resolvePdfImages(opts, renderPdfLines(lines[:starts[0]]))
+		seg, err := writeSegment(opts.WorkDir, 1, "Introducción", intro)
 		if err != nil {
 			return nil, err
 		}
@@ -119,7 +128,7 @@ func (p *PdfConverter) level1Bookmarks(ctx context.Context, opts Options) ([]Seg
 		if i+1 < len(starts) {
 			end = starts[i+1]
 		}
-		content := renderPdfLines(lines[beg:end])
+		content := resolvePdfImages(opts, renderPdfLines(lines[beg:end]))
 		// Marcador "padre" seguido de sub-secciones sin contenido propio: se
 		// omite para no generar conceptos vacíos.
 		if content == "" && len(starts) > 1 {
@@ -187,6 +196,29 @@ func flattenBookmarks(bms []pdfBookmark, depth int, out *[]pdfBookmark) {
 	}
 }
 
+// resolvePdfImages copia a assets/ las imágenes referenciadas por el markdown
+// de un segmento PDF (extraídas por pdftohtml junto al XML) y reescribe las
+// rutas para que apunten a ../assets/. El atributo src suele venir como ruta
+// absoluta al archivo extraído; si es relativa se resuelve contra WorkDir.
+// Las referencias remotas o rotas se dejan intactas: la extracción es
+// best-effort y nunca falla la conversión.
+func resolvePdfImages(opts Options, markdown string) string {
+	return rewriteMarkdownImages(markdown, func(src string) string {
+		if isRemoteRef(src) || opts.Assets == nil {
+			return ""
+		}
+		path := src
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(opts.WorkDir, path)
+		}
+		name, err := opts.Assets.addFile(path)
+		if err != nil {
+			return "" // archivo ausente o ilegible: se conserva la referencia original
+		}
+		return name
+	})
+}
+
 // lineForBookmarks localiza la línea que contiene el título del marcador en
 // su página. Si no la encuentra, usa el inicio de la página como aproximación.
 func lineForBookmark(lines []pdfLine, bm pdfBookmark) int {
@@ -240,9 +272,61 @@ type pdfText struct {
 	Text  string  `xml:",chardata"`
 }
 
+// UnmarshalXML acumula todo el texto contenido en <text>, incluido el que
+// envuelven hijos como <b>/<i> (negritas y cursivas): el chardata directo
+// quedaría vacío y perderíamos títulos y palabras resaltadas.
+func (t *pdfText) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	for _, attr := range start.Attr {
+		switch attr.Name.Local {
+		case "top":
+			t.Top = attr.Value
+		case "left":
+			t.Left = attr.Value
+		case "width":
+			t.Width = attr.Value
+		case "font":
+			t.Font = attr.Value
+		}
+	}
+	depth := 0
+	for {
+		tok, err := d.Token()
+		if err != nil {
+			return err
+		}
+		switch tt := tok.(type) {
+		case xml.StartElement:
+			depth++
+		case xml.EndElement:
+			if depth == 0 {
+				return nil
+			}
+			depth--
+		case xml.CharData:
+			t.Text += string(tt)
+		}
+	}
+}
+
 type pdfPage struct {
-	Number string    `xml:"number,attr"`
-	Texts  []pdfText `xml:"text"`
+	Number string        `xml:"number,attr"`
+	Width  string        `xml:"width,attr"`
+	Height string        `xml:"height,attr"`
+	Texts  []pdfText     `xml:"text"`
+	Images []pdfImage    `xml:"image"`
+	// Las declaraciones de fuente viven dentro de cada <page> en las
+	// versiones actuales de poppler (antes iban a nivel documento).
+	Fonts []pdfFontSpec `xml:"fontspec"`
+}
+
+// pdfImage es una imagen embebida que pdftohtml extrajo junto al XML.
+// Src es el nombre del archivo relativo al directorio del XML.
+type pdfImage struct {
+	Top    string `xml:"top,attr"`
+	Left   string `xml:"left,attr"`
+	Width  string `xml:"width,attr"`
+	Height string `xml:"height,attr"`
+	Src    string `xml:"src,attr"`
 }
 
 type pdfDocument struct {
@@ -253,14 +337,16 @@ type pdfDocument struct {
 // pdfLine es una línea visual reconstruida en una página de un PDF.
 // Size es el mayor tamaño de fuente presente en la línea.
 // Cols son las posiciones izquierdas de cada columna (runs) y Cells sus textos.
+// ImgSrc != "" indica una pseudo-línea de imagen embebida (Text queda vacío).
 type pdfLine struct {
-	Page  int
-	Top   float64
-	Left  float64
-	Size  float64
-	Text  string
-	Cols  []float64
-	Cells []string
+	Page   int
+	Top    float64
+	Left   float64
+	Size   float64
+	Text   string
+	Cols   []float64
+	Cells  []string
+	ImgSrc string
 }
 
 // pdfHeading es un encabezado detectado con su posición para ordenar secciones.
@@ -343,7 +429,7 @@ func segmentsFromHeadings(opts Options, lines []pdfLine, headings []pdfHeading) 
 	segments := make([]Segment, 0, len(headings)+1)
 	// Contenido anterior al primer encabezado (portada, títulos, tablas).
 	if starts[0] > 0 {
-		if intro := renderPdfLines(lines[:starts[0]]); intro != "" {
+		if intro := resolvePdfImages(opts, renderPdfLines(lines[:starts[0]])); intro != "" {
 			seg, err := writeSegment(opts.WorkDir, 1, "Introducción", intro)
 			if err != nil {
 				return nil, err
@@ -357,7 +443,7 @@ func segmentsFromHeadings(opts Options, lines []pdfLine, headings []pdfHeading) 
 		if i+1 < len(headings) {
 			end = starts[i+1]
 		}
-		content := renderPdfLines(lines[beg:end])
+		content := resolvePdfImages(opts, renderPdfLines(lines[beg:end]))
 		// Un encabezado "padre" seguido de sub-secciones no deja contenido:
 		// se omite para no generar conceptos vacíos (salvo que sea el único).
 		if content == "" && len(starts) > 1 {
@@ -373,10 +459,11 @@ func segmentsFromHeadings(opts Options, lines []pdfLine, headings []pdfHeading) 
 }
 
 // pdfLinesFromXML ejecuta pdftohtml -xml y reconstruye las líneas visuales
-// del documento con su tamaño de fuente, página y coordenadas.
+// del documento con su tamaño de fuente, página y coordenadas. Sin -i, las
+// imágenes embebidas se extraen junto al XML y llegan como elementos <image>.
 func (p *PdfConverter) pdfLinesFromXML(ctx context.Context, opts Options) ([]pdfLine, error) {
 	xmlPath := filepath.Join(opts.WorkDir, "pdf.xml")
-	cmd := exec.CommandContext(ctx, "pdftohtml", "-xml", "-i", "-q", "-noframes", opts.SourcePath, xmlPath)
+	cmd := exec.CommandContext(ctx, "pdftohtml", "-xml", "-q", "-noframes", opts.SourcePath, xmlPath)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("pdftohtml: %v: %s", err, output)
 	}
@@ -391,20 +478,37 @@ func (p *PdfConverter) pdfLinesFromXML(ctx context.Context, opts Options) ([]pdf
 		return nil, fmt.Errorf("parse pdf xml: %w", err)
 	}
 
-	// Mapa de fuentes: pdftohtml declara el tamaño en <fontspec>, y cada
-	// <text font="N"> referencia a esa fuente por id.
+	// Mapa de fuentes: pdftohtml declara el tamaño en <fontspec> (dentro de
+	// cada <page> en poppler moderno, o a nivel documento en versiones
+	// viejas), y cada <text font="N"> referencia a esa fuente por id.
 	fontSizes := make(map[string]float64, len(doc.Fonts))
-	for _, f := range doc.Fonts {
-		if f.Size > 0 {
-			fontSizes[f.ID] = f.Size
+	collectFonts := func(specs []pdfFontSpec) {
+		for _, f := range specs {
+			if f.Size > 0 {
+				fontSizes[f.ID] = f.Size
+			}
 		}
+	}
+	collectFonts(doc.Fonts)
+	for _, page := range doc.Pages {
+		collectFonts(page.Fonts)
 	}
 
 	return buildPdfLines(doc, fontSizes), nil
 }
 
+// Filtros de imágenes embebidas: evita ruido (iconitos, watermarks) y
+// documentos patológicos con miles de recursos.
+const (
+	pdfImageMinSide  = 32.0 // px mínimos por lado
+	pdfImageMaxCover = 0.95 // cobertura máxima del área de página (fondos)
+	pdfImageLimit    = 200  // tope por documento
+)
+
 // buildPdfLines agrupa los runs de texto en líneas visuales ordenadas por
-// (página, top), uniendo runs de la misma línea con espacios simples.
+// (página, top), uniendo runs de la misma línea con espacios simples. Las
+// imágenes embebidas que pasan los filtros se insertan como pseudo-líneas
+// (ImgSrc) en su posición vertical dentro de la página.
 func buildPdfLines(doc pdfDocument, fontSizes map[string]float64) []pdfLine {
 	type run struct {
 		top   float64
@@ -414,14 +518,16 @@ func buildPdfLines(doc pdfDocument, fontSizes map[string]float64) []pdfLine {
 		text  string
 	}
 
-	var pages []struct {
+	var items []struct {
 		run
 		pageNum int
+		imgSrc  string // != "" => imagen embebida
 	}
+	accepted := 0
 	for _, page := range doc.Pages {
 		pn, _ := strconv.Atoi(page.Number)
 		if pn == 0 {
-			pn = len(pages) + 1
+			pn = len(items) + 1
 		}
 		for _, t := range page.Texts {
 			top, _ := strconv.ParseFloat(t.Top, 64)
@@ -431,18 +537,49 @@ func buildPdfLines(doc pdfDocument, fontSizes map[string]float64) []pdfLine {
 			if text == "" {
 				continue
 			}
-			pages = append(pages, struct {
+			items = append(items, struct {
 				run
 				pageNum int
+				imgSrc  string
 			}{
 				run:     run{top: top, left: left, width: width, size: fontSizes[t.Font], text: text},
 				pageNum: pn,
 			})
 		}
+
+		// Imágenes embebidas extraídas junto al XML. Coordenadas y tamaños
+		// vienen en las mismas unidades que el texto.
+		pageW, _ := strconv.ParseFloat(page.Width, 64)
+		pageH, _ := strconv.ParseFloat(page.Height, 64)
+		for _, im := range page.Images {
+			if accepted >= pdfImageLimit {
+				break
+			}
+			top, _ := strconv.ParseFloat(im.Top, 64)
+			left, _ := strconv.ParseFloat(im.Left, 64)
+			w, _ := strconv.ParseFloat(im.Width, 64)
+			h, _ := strconv.ParseFloat(im.Height, 64)
+			if im.Src == "" || w < pdfImageMinSide || h < pdfImageMinSide {
+				continue
+			}
+			if pageW > 0 && pageH > 0 && w*h >= pdfImageMaxCover*pageW*pageH {
+				continue // fondo/watermark que cubre (casi) toda la página
+			}
+			items = append(items, struct {
+				run
+				pageNum int
+				imgSrc  string
+			}{
+				run:     run{top: top, left: left},
+				pageNum: pn,
+				imgSrc:  im.Src,
+			})
+			accepted++
+		}
 	}
 
-	sort.Slice(pages, func(i, j int) bool {
-		a, b := pages[i], pages[j]
+	sort.Slice(items, func(i, j int) bool {
+		a, b := items[i], items[j]
 		if a.pageNum != b.pageNum {
 			return a.pageNum < b.pageNum
 		}
@@ -453,15 +590,28 @@ func buildPdfLines(doc pdfDocument, fontSizes map[string]float64) []pdfLine {
 	})
 
 	var lines []pdfLine
-	for i := 0; i < len(pages); {
+	for i := 0; i < len(items); {
+		// Pseudo-línea de imagen: entra sola, nunca se agrupa con texto.
+		if items[i].imgSrc != "" {
+			lines = append(lines, pdfLine{
+				Page:   items[i].pageNum,
+				Top:    items[i].top,
+				Left:   items[i].left,
+				ImgSrc: items[i].imgSrc,
+			})
+			i++
+			continue
+		}
+
 		j := i
-		maxLeft := pages[i].left
-		maxTop := pages[i].top
-		maxSize := pages[i].size
-		for j < len(pages) && pages[j].pageNum == pages[i].pageNum && absF(pages[j].top-pages[i].top) < 1 {
-			maxSize = math.Max(maxSize, pages[j].size)
-			maxLeft = math.Min(maxLeft, pages[j].left)
-			maxTop = pages[j].top
+		maxLeft := items[i].left
+		maxTop := items[i].top
+		maxSize := items[i].size
+		for j < len(items) && items[j].imgSrc == "" &&
+			items[j].pageNum == items[i].pageNum && absF(items[j].top-items[i].top) < 1 {
+			maxSize = math.Max(maxSize, items[j].size)
+			maxLeft = math.Min(maxLeft, items[j].left)
+			maxTop = items[j].top
 			j++
 		}
 
@@ -473,7 +623,7 @@ func buildPdfLines(doc pdfDocument, fontSizes map[string]float64) []pdfLine {
 			// Si el run anterior no termina aquí, hubo salto de línea dentro
 			// de la misma top (columnas): usa la distancia para espaciado.
 			if k > i {
-				gap := pages[k].left - prevEnd
+				gap := items[k].left - prevEnd
 				// Runs solapados (columnas muy juntas, superíndices) producen
 				// gaps negativos: el conteo nunca puede ser menor que 1.
 				spaceCount := 1 + int((gap-2)/3) // ~3 unidades por espacio
@@ -485,14 +635,14 @@ func buildPdfLines(doc pdfDocument, fontSizes map[string]float64) []pdfLine {
 				}
 				parts = append(parts, strings.Repeat(" ", spaceCount))
 			}
-			parts = append(parts, pages[k].text)
-			cols = append(cols, pages[k].left)
-			cells = append(cells, pages[k].text)
-			prevEnd = pages[k].left + pages[k].width
+			parts = append(parts, items[k].text)
+			cols = append(cols, items[k].left)
+			cells = append(cells, items[k].text)
+			prevEnd = items[k].left + items[k].width
 		}
 
 		lines = append(lines, pdfLine{
-			Page:  pages[i].pageNum,
+			Page:  items[i].pageNum,
 			Top:   maxTop,
 			Left:  maxLeft,
 			Size:  maxSize,
@@ -507,10 +657,17 @@ func buildPdfLines(doc pdfDocument, fontSizes map[string]float64) []pdfLine {
 
 // renderPdfLines une las líneas de una sección y normaliza el texto para
 // markdown: une palabras partidas por justificación, detecta bloques de
-// columnas alineadas (tablas) y los convierte a tablas markdown.
+// columnas alineadas (tablas) y los convierte a tablas markdown. Las
+// pseudo-líneas de imagen se emiten como referencias ![](src) que luego
+// resolvePdfImages reescribe hacia assets/.
 func renderPdfLines(lines []pdfLine) string {
 	var b strings.Builder
 	for i := 0; i < len(lines); {
+		if lines[i].ImgSrc != "" {
+			b.WriteString("![imagen](" + lines[i].ImgSrc + ")\n\n")
+			i++
+			continue
+		}
 		if n, ok := tableBlock(lines, i); ok {
 			b.WriteString(tableMarkdown(lines[i : i+n]))
 			b.WriteString("\n\n")
@@ -674,8 +831,15 @@ func (p *PdfConverter) level3PageChunks(ctx context.Context, opts Options) ([]Se
 			return nil, fmt.Errorf("pdftotext pages %d-%d: %w", start, end, err)
 		}
 
+		// Sin coordenadas en este nivel: las imágenes del rango se listan al
+		// final del segmento.
+		content := string(output)
+		if refs := extractRangeImages(ctx, opts, start, end); len(refs) > 0 {
+			content += "\n\n" + strings.Join(refs, "\n\n") + "\n"
+		}
+
 		title := fmt.Sprintf("Páginas %d–%d", start, end)
-		seg, err := writeSegment(opts.WorkDir, len(segments)+1, title, string(output))
+		seg, err := writeSegment(opts.WorkDir, len(segments)+1, title, content)
 		if err != nil {
 			return nil, err
 		}
@@ -685,6 +849,62 @@ func (p *PdfConverter) level3PageChunks(ctx context.Context, opts Options) ([]Se
 		return nil, fmt.Errorf("pdf sin páginas")
 	}
 	return segments, nil
+}
+
+// extractRangeImages extrae con pdfimages -all las imágenes embebidas en el
+// rango de páginas [start,end] y las registra en assets/. Devuelve las
+// referencias markdown relativas para añadirlas al final del segmento.
+// Best-effort: sin imágenes, con errores o superado el tope devuelve nil/parcial.
+func extractRangeImages(ctx context.Context, opts Options, start, end int) []string {
+	if opts.Assets == nil {
+		return nil
+	}
+	dir := filepath.Join(opts.WorkDir, fmt.Sprintf("l3-%d-%d", start, end))
+	prefix := filepath.Join(dir, "img")
+	cmd := exec.CommandContext(ctx, "pdfimages", "-all",
+		"-f", strconv.Itoa(start), "-l", strconv.Itoa(end),
+		opts.SourcePath, prefix)
+	if err := cmd.Run(); err != nil {
+		return nil
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var refs []string
+	for _, e := range entries {
+		if e.IsDir() || opts.Assets.Count() >= pdfImageLimit {
+			continue
+		}
+		full := filepath.Join(dir, e.Name())
+		w, h, ok := rasterDimensions(full)
+		if !ok || w < int(pdfImageMinSide) || h < int(pdfImageMinSide) {
+			continue // no decodificable (ppm/tiff/jp2) o demasiado pequeña
+		}
+		name, err := opts.Assets.addFile(full)
+		if err != nil {
+			continue
+		}
+		refs = append(refs, fmt.Sprintf("![imagen](../%s/%s)", assetsDirName, name))
+	}
+	return refs
+}
+
+// rasterDimensions lee solo la cabecera de una imagen para obtener sus
+// dimensiones. Devuelve ok=false si el formato no es decodificable con la
+// stdlib (png/jpeg/gif).
+func rasterDimensions(path string) (w, h int, ok bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, 0, false
+	}
+	defer f.Close()
+	cfg, _, err := image.DecodeConfig(f)
+	if err != nil {
+		return 0, 0, false
+	}
+	return cfg.Width, cfg.Height, true
 }
 
 func pdfPageCount(ctx context.Context, path string) (int, error) {

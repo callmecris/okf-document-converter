@@ -161,20 +161,14 @@ export async function fetchBundleFile(url: string): Promise<Blob> {
   return res.blob()
 }
 
-/** Abre un archivo del bundle en una pestaña nueva (vía blob autenticado). */
-export async function openBundleFile(url: string, fallbackName: string): Promise<void> {
+/** Descarga un archivo individual del bundle vía blob autenticado (sin abrir pestañas). */
+export async function downloadBundleFile(url: string, fallbackName: string): Promise<void> {
   const blob = await fetchBundleFile(url)
   const objectURL = URL.createObjectURL(blob)
-  const win = window.open('', '_blank')
-  if (win) {
-    win.document.title = fallbackName
-    win.location.href = objectURL
-  } else {
-    const a = document.createElement('a')
-    a.href = objectURL
-    a.download = fallbackName
-    a.click()
-  }
+  const a = document.createElement('a')
+  a.href = objectURL
+  a.download = fallbackName
+  a.click()
   window.setTimeout(() => URL.revokeObjectURL(objectURL), 60_000)
 }
 

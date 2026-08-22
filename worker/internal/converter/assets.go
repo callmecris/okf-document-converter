@@ -24,7 +24,9 @@ var mdImageRe = regexp.MustCompile(`!\[([^\]]*)\]\(([^)\s]+)([^)]*)\)`)
 // es "../assets/<archivo>".
 type assetCollector struct {
 	workDir string
-	// seen evita copiar dos veces el mismo recurso: origen -> nombre final.
+	// seen evita copiar dos veces el mismo recurso: hash del contenido -> nombre
+	// final. Así un logo repetido en muchas páginas se guarda una sola vez,
+	// venga de la ruta que venga.
 	seen map[string]string
 	// used registra los nombres ya asignados para no colisionar.
 	used map[string]bool
@@ -44,10 +46,12 @@ func (a *assetCollector) dir() string { return filepath.Join(a.workDir, assetsDi
 // Count devuelve cuántos recursos distintos se extrajeron.
 func (a *assetCollector) Count() int { return len(a.seen) }
 
-// add copia el recurso indicado por srcPath a assets/ y devuelve su nombre
-// final dentro del directorio. Recursos idénticos se copian una sola vez.
+// add copia el recurso indicado a assets/ y devuelve su nombre final dentro
+// del directorio. Recursos con contenido idéntico se copian una sola vez.
 func (a *assetCollector) add(srcPath string, data []byte) (string, error) {
-	if name, ok := a.seen[srcPath]; ok {
+	sum := sha1.Sum(data)
+	key := hex.EncodeToString(sum[:])
+	if name, ok := a.seen[key]; ok {
 		return name, nil
 	}
 	if err := os.MkdirAll(a.dir(), 0o755); err != nil {
@@ -58,7 +62,7 @@ func (a *assetCollector) add(srcPath string, data []byte) (string, error) {
 	if err := os.WriteFile(filepath.Join(a.dir(), name), data, 0o644); err != nil {
 		return "", fmt.Errorf("write asset %s: %w", name, err)
 	}
-	a.seen[srcPath] = name
+	a.seen[key] = name
 	return name, nil
 }
 
